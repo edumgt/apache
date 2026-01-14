@@ -145,3 +145,7 @@ docker run --rm -v "${PWD}:/data" -w /data my-tesseract-kor `
 docker run --rm --user 0:0 -v "${PWD}:/data" -w /data my-tesseract-kor `
   -l kor+eng image.png out
 ```
+
+
+## todo 
+### fastapi 에 OCR 연동해서 API Serving
