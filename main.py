@@ -305,7 +305,6 @@ def list_posts(
 
     return PostListResponse(items=paged, total=total, page=page, size=size)
 
-
 @app.get(
     "/api/posts/{post_id}",
     response_model=Post,
