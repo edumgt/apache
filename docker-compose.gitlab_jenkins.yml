@@ -34,12 +34,6 @@ services:
     ports:
       - "8080:8080"
       - "50000:50000"
-    environment:
-      # (선택) init.groovy에서 사용할 관리자 계정
-      - JENKINS_ADMIN_ID=admin
-      - JENKINS_ADMIN_PASSWORD=admin1234
-      # (선택) 설치 마법사 스킵 (원치 않으면 제거)
-      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
     volumes:
       - jenkins_home:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
