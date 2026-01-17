@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path as P
+import shutil
+import subprocess
+import tempfile
 from threading import Lock
 from typing import List, Optional, Literal, Tuple
 
-from fastapi import FastAPI, HTTPException, Query, Path, Body, status
+from fastapi import FastAPI, HTTPException, Query, Path, Body, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -15,6 +19,7 @@ from pydantic import BaseModel, Field
 openapi_tags = [
     {"name": "Health", "description": "서버 상태/헬스체크"},
     {"name": "Posts", "description": "게시글 CRUD 및 검색/정렬/페이징"},
+    {"name": "OCR", "description": "이미지 OCR (Tesseract)"},
 ]
 
 app = FastAPI(
@@ -112,6 +117,12 @@ class PostListResponse(BaseModel):
     total: int = Field(..., ge=0, description="검색 조건 포함 전체 게시글 수", examples=[35])
     page: int = Field(..., ge=1, description="현재 페이지(1부터)", examples=[1])
     size: int = Field(..., ge=1, le=100, description="페이지 크기", examples=[10])
+
+
+class OcrResponse(BaseModel):
+    text: str = Field(..., description="추출된 텍스트")
+    lang: str = Field(..., description="사용한 언어 코드 (예: kor+eng)")
+    psm: int = Field(..., description="Tesseract Page Segmentation Mode")
 
 
 # =========================================================
@@ -510,3 +521,48 @@ def delete_post(
         p = get_post_or_404(post_id)
         POSTS.remove(p)
         return {"ok": True, "deleted_id": post_id}
+
+
+@app.post(
+    "/api/ocr",
+    tags=["OCR"],
+    summary="이미지 OCR (Tesseract)",
+    description="이미지(PNG/JPG 등)를 업로드하면 OCR로 텍스트를 추출합니다.",
+    response_model=OcrResponse,
+)
+def ocr_image(
+    file: UploadFile = File(..., description="OCR 대상 이미지 파일"),
+    lang: str = Query("kor+eng", description="Tesseract 언어 코드 (예: kor, eng, kor+eng)"),
+    psm: int = Query(6, ge=0, le=13, description="Tesseract PSM (기본 6: 단일 블록 텍스트)"),
+):
+    if file.content_type and not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="이미지 파일만 업로드 가능합니다.")
+
+    suffix = P(file.filename or "").suffix or ".png"
+
+    with tempfile.TemporaryDirectory() as td:
+        td_path = P(td)
+        in_path = td_path / f"input{suffix}"
+        out_base = td_path / "out"
+
+        with open(in_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        cmd = [
+            "tesseract",
+            str(in_path),
+            str(out_base),
+            "-l",
+            lang,
+            "--psm",
+            str(psm),
+        ]
+        p = subprocess.run(cmd, capture_output=True, text=True)
+
+        if p.returncode != 0:
+            raise HTTPException(status_code=500, detail=(p.stderr or "tesseract failed"))
+
+        txt_path = out_base.with_suffix(".txt")
+        text = txt_path.read_text(encoding="utf-8", errors="ignore")
+
+        return OcrResponse(text=text, lang=lang, psm=psm)
