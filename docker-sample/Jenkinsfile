@@ -1,0 +1,112 @@
+pipeline {
+  agent any
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  environment {
+    INDEX_HTML = 'index.html'
+    DOCKERFILE = 'Dockerfile'
+    MAX_LINES  = '200'
+
+    // 배포용
+    IMAGE      = "local/simple-nginx:${BUILD_NUMBER}"
+    CONTAINER  = "simple-nginx"
+    PORT       = "8090"
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Show files') {
+      steps {
+        sh '''
+          set -eux
+
+          echo "=== PWD ==="
+          pwd
+
+          echo "=== List (top) ==="
+          ls -al
+
+          echo "=== Show: ${INDEX_HTML} (first ${MAX_LINES} lines) ==="
+          test -f "${INDEX_HTML}" \
+            && sed -n "1,${MAX_LINES}p" "${INDEX_HTML}" \
+            || (echo "[ERROR] ${INDEX_HTML} not found" && exit 1)
+
+          echo "=== Show: ${DOCKERFILE} (first ${MAX_LINES} lines) ==="
+          test -f "${DOCKERFILE}" \
+            && sed -n "1,${MAX_LINES}p" "${DOCKERFILE}" \
+            || (echo "[ERROR] ${DOCKERFILE} not found" && exit 1)
+        '''
+      }
+    }
+
+    stage('Docker Build on Host') {
+      steps {
+        sh '''
+          set -eux
+          echo "=== Docker version (should work) ==="
+          docker --version
+          docker version
+
+          echo "=== Build image: ${IMAGE} ==="
+          docker build -t "${IMAGE}" .
+          docker images | head -n 20
+        '''
+      }
+    }
+
+    stage('Deploy Nginx Container on Host') {
+      steps {
+        sh '''
+          set -eux
+          echo "=== Replace container: ${CONTAINER} ==="
+          docker rm -f "${CONTAINER}" || true
+          docker run -d --name "${CONTAINER}" -p "${PORT}:80" --restart unless-stopped "${IMAGE}"
+          docker ps --filter "name=${CONTAINER}"
+        '''
+      }
+    }
+
+    stage('Smoke Test') {
+      steps {
+        sh '''
+          set -eux
+          echo "=== Smoke test via host.docker.internal:${PORT} ==="
+          for i in $(seq 1 30); do
+            if curl -fsS "http://host.docker.internal:${PORT}" >/dev/null; then
+              echo "OK"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "FAIL: nginx not responding"
+          docker logs --tail=200 "${CONTAINER}" || true
+          exit 1
+        '''
+      }
+    }
+  }
+
+  post {
+    always {
+      sh '''
+        echo "=== Post: container status ==="
+        docker ps --filter "name=${CONTAINER}" || true
+      '''
+    }
+    failure {
+      sh '''
+        echo "=== Post: last logs ==="
+        docker logs --tail=300 "${CONTAINER}" || true
+      '''
+    }
+  }
+}
